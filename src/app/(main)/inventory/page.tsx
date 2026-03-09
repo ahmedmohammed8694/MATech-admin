@@ -9,8 +9,6 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
-  AlertCircle,
-  CheckCircle2,
   Package,
   ArrowUpDown,
   Loader2
@@ -37,7 +35,7 @@ export default function InventoryPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    fetch("/api/products") // Assuming we bridge this API or build a new one
+    fetch("/api/admin/products")
       .then(res => res.json())
       .then(data => setProducts(data.products || []))
       .catch(console.error)
