@@ -43,16 +43,21 @@ export async function POST(req: Request) {
     const product = await Product.create(body);
 
     return NextResponse.json({ 
-      message: "Product deployed successfully", 
+      message: "Product entity initialized in global matrix", 
       product 
     }, { status: 201 });
   } catch (error: any) {
     console.error("Admin product creation error:", error);
     
+    // Improved MongoDB unique constraint error handling
     if (error.code === 11000) {
-      return NextResponse.json({ error: "Product slug must be unique" }, { status: 400 });
+      const field = Object.keys(error.keyPattern)[0];
+      return NextResponse.json({ 
+        error: `Matrix Collision: ${field === 'slug' ? 'Product ID (Slug)' : 'Field'} already exists.`,
+        code: "DUPLICATE_ENTITY"
+      }, { status: 400 });
     }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Matrix initialization failure" }, { status: 500 });
   }
 }

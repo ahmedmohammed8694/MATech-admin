@@ -13,7 +13,11 @@ import {
   Settings, 
   Image as LucideImage,
   Globe,
-  Zap
+  Zap,
+  CheckCircle2,
+  AlertCircle,
+  UploadCloud,
+  Link as LinkIcon
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -27,6 +31,10 @@ export default function NewProductPage() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
+  const [uploadMode, setUploadMode] = useState<"url" | "upload">("url");
+  const [isUploading, setIsUploading] = useState(false);
+  
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -51,9 +59,61 @@ export default function NewProductPage() {
       .catch(console.error);
   }, []);
 
+  // Slug availability check
+  useEffect(() => {
+    if (!formData.slug) {
+      setSlugStatus("idle");
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setSlugStatus("checking");
+      try {
+        const res = await fetch("/api/admin/products/check-slug", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug: formData.slug })
+        });
+        const data = await res.json();
+        setSlugStatus(data.available ? "available" : "taken");
+      } catch {
+        setSlugStatus("idle");
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [formData.slug]);
+
   const handleNameChange = (name: string) => {
     const slug = name.toLowerCase().replace(/ /g, "-").replace(/[^\w-]+/g, "");
     setFormData(prev => ({ ...prev, name, slug }));
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const body = new FormData();
+    body.append("file", file);
+
+    try {
+      const res = await fetch("/api/admin/uploads", {
+        method: "POST",
+        body
+      });
+      const data = await res.json();
+      if (data.url) {
+        setFormData(prev => ({
+          ...prev,
+          images: [...prev.images.filter(img => img !== ""), data.url]
+        }));
+      }
+    } catch {
+      alert("Matrix upload failure");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleFeatureChange = (index: number, value: string) => {
@@ -94,6 +154,10 @@ export default function NewProductPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (slugStatus === "taken") {
+      alert("Product ID already exists in the matrix. Please modify the slug.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -116,12 +180,16 @@ export default function NewProductPage() {
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("Failed to deploy product");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to deploy product");
+      }
 
       router.push("/inventory");
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
-      alert("Error deploying product. Check SKU/Slug uniqueness.");
+      const msg = error instanceof Error ? error.message : "Error deploying product. Check SKU/Slug uniqueness.";
+      alert(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -145,7 +213,7 @@ export default function NewProductPage() {
         </div>
         <button 
           onClick={handleSubmit}
-          disabled={isSubmitting}
+          disabled={isSubmitting || slugStatus === "taken"}
           className="bg-primary text-white px-8 py-5 rounded-2xl font-black uppercase tracking-[0.2em] flex items-center space-x-3 glow-blue hover:scale-[1.02] disabled:opacity-50 disabled:scale-100 transition-all border border-white/10 shrink-0"
         >
           {isSubmitting ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
@@ -175,13 +243,34 @@ export default function NewProductPage() {
                 />
               </div>
               <div className="space-y-3">
-                <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">Slug (Node Matrix ID)</label>
+                <div className="flex items-center justify-between px-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Slug (Node Matrix ID)</label>
+                    <div className="flex items-center space-x-2">
+                        {slugStatus === "checking" && <Loader2 size={12} className="animate-spin text-primary" />}
+                        {slugStatus === "available" && <CheckCircle2 size={12} className="text-green-500" />}
+                        {slugStatus === "taken" && <AlertCircle size={12} className="text-destructive" />}
+                        <span className={cn(
+                            "text-[8px] font-black uppercase tracking-widest",
+                            slugStatus === "available" ? "text-green-500" : 
+                            slugStatus === "taken" ? "text-destructive" : "text-muted-foreground"
+                        )}>
+                            {slugStatus === "idle" && "Verification Pending"}
+                            {slugStatus === "checking" && "Scanning Network..."}
+                            {slugStatus === "available" && "ID Verified"}
+                            {slugStatus === "taken" && "Collision Detected"}
+                        </span>
+                    </div>
+                </div>
                 <input 
                   required
                   type="text" 
                   value={formData.slug}
                   onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-primary transition-all font-mono text-xs"
+                  className={cn(
+                      "w-full bg-white/5 border rounded-2xl px-6 py-4 text-white focus:outline-none transition-all font-mono text-xs",
+                      slugStatus === "available" ? "border-green-500/30" : 
+                      slugStatus === "taken" ? "border-destructive/30" : "border-white/10 focus:border-primary"
+                  )}
                 />
               </div>
             </div>
@@ -382,12 +471,46 @@ export default function NewProductPage() {
                     <LucideImage className="text-primary" size={18} />
                     <h2 className="text-sm font-black text-white uppercase tracking-tighter">Media Assets</h2>
                 </div>
-                <button type="button" onClick={addImage} className="text-primary hover:scale-110 transition-all">
-                  <Plus size={18} />
-                </button>
+                <div className="flex items-center bg-white/5 rounded-lg p-1">
+                    <button 
+                        type="button"
+                        onClick={() => setUploadMode("url")}
+                        className={cn("p-1.5 rounded-md transition-all", uploadMode === "url" ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-muted-foreground hover:text-white")}
+                    >
+                        <LinkIcon size={14} />
+                    </button>
+                    <button 
+                        type="button"
+                        onClick={() => setUploadMode("upload")}
+                        className={cn("p-1.5 rounded-md transition-all", uploadMode === "upload" ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-muted-foreground hover:text-white")}
+                    >
+                        <UploadCloud size={14} />
+                    </button>
+                </div>
             </div>
 
             <div className="space-y-4">
+              {uploadMode === "upload" && (
+                  <div className="relative group">
+                    <input 
+                        type="file" 
+                        accept="image/*"
+                        onChange={handleFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="border-2 border-dashed border-white/10 rounded-[1.5rem] p-8 flex flex-col items-center justify-center space-y-3 group-hover:border-primary/50 transition-all bg-white/[0.02]">
+                        {isUploading ? (
+                            <Loader2 size={24} className="animate-spin text-primary" />
+                        ) : (
+                            <UploadCloud size={24} className="text-muted-foreground group-hover:text-primary transition-colors" />
+                        )}
+                        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-white transition-colors text-center leading-relaxed">
+                            {isUploading ? "Uploading to Matrix..." : "Drop file or Click to Upload"}
+                        </p>
+                    </div>
+                  </div>
+              )}
+
               {formData.images.map((img, i) => (
                 <div key={i} className="space-y-2">
                   <div className="flex items-center space-x-3">
@@ -395,7 +518,7 @@ export default function NewProductPage() {
                       type="text" 
                       value={img}
                       onChange={(e) => handleImageChange(i, e.target.value)}
-                      placeholder="https://image-url"
+                      placeholder="https://image-url or local path"
                       className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary transition-all text-[10px] font-mono"
                     />
                     <button type="button" onClick={() => removeImage(i)} className="text-muted-foreground hover:text-destructive">
@@ -410,6 +533,13 @@ export default function NewProductPage() {
                   )}
                 </div>
               ))}
+              
+              {uploadMode === "url" && (
+                <button type="button" onClick={addImage} className="w-full py-4 border border-dashed border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary hover:border-primary/50 transition-all flex items-center justify-center space-x-2">
+                    <Plus size={14} />
+                    <span>Append Image URL</span>
+                </button>
+              )}
             </div>
           </section>
 
